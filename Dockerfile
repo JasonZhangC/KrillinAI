@@ -12,13 +12,16 @@ RUN go mod download && \
     chmod +x ./KrillinAI
 
 # 第二阶段：创建运行环境
-FROM ubuntu:latest
+FROM nvidia/cuda:12.3.2-cudnn9-runtime-ubuntu22.04
 
 WORKDIR /app
 
 # 安装必要依赖和中日韩字体支持
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends wget ca-certificates ffmpeg fonts-noto-cjk && \
+    apt-get install -y software-properties-common && \
+    add-apt-repository ppa:savoury1/ffmpeg4 && \
+    apt-get update && \
+    apt-get install -y ffmpeg libdav1d-dev wget ca-certificates fonts-noto-cjk && \
     rm -rf /var/lib/apt/lists/*
 
 # 下载yt-dlp

@@ -20,6 +20,8 @@ func (c *FastwhisperProcessor) Transcription(audioFile, language, workDir string
 		"--output_format", "json",
 		"--language", language,
 		"--output_dir", workDir,
+		"--device", "cuda",
+		"--compute_type", "float16",
 		audioFile,
 	}
 	cmd := exec.Command(storage.FasterwhisperPath, cmdArgs...)
