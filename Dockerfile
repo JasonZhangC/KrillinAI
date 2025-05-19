@@ -16,9 +16,9 @@ FROM ubuntu:latest
 
 WORKDIR /app
 
-# 安装必要依赖
+# 安装必要依赖和中日韩字体支持
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends wget ca-certificates ffmpeg && \
+    apt-get install -y --no-install-recommends wget ca-certificates ffmpeg fonts-noto-cjk && \
     rm -rf /var/lib/apt/lists/*
 
 # 下载yt-dlp
