@@ -322,7 +322,58 @@ func embedSubtitles(stepParam *types.SubtitleTaskStepParam, isHorizontal bool) e
 		return fmt.Errorf("embedSubtitles srtToAss error: %w", err)
 	}
 
-	cmd := exec.Command(storage.FfmpegPath, "-y", "-i", stepParam.InputVideoPath, "-vf", fmt.Sprintf("ass=%s", strings.ReplaceAll(assPath, "\\", "/")), "-c:a", "aac", "-b:a", "192k", filepath.Join(stepParam.TaskBasePath, fmt.Sprintf("/output/%s", outputFileName)))
+	// 检测系统是否支持NVENC编码
+	var useGPU bool
+	
+	// 检查ffmpeg是否支持NVENC
+	nvencSupportCmd := exec.Command(storage.FfmpegPath, "-hide_banner", "-encoders")
+	ffmpegOutput, ffmpegErr := nvencSupportCmd.CombinedOutput()
+	if ffmpegErr != nil {
+		log.GetLogger().Warn("检查ffmpeg编码器列表失败", zap.Error(ffmpegErr))
+	} else {
+		outputStr := string(ffmpegOutput)
+		if strings.Contains(outputStr, "h264_nvenc") || strings.Contains(outputStr, "hevc_nvenc") {
+			log.GetLogger().Info("ffmpeg支持NVENC编码器")
+			useGPU = true
+		} else {
+			log.GetLogger().Warn("ffmpeg不支持NVENC编码器，将使用CPU编码")
+			// 输出encoder列表的一部分，用于调试
+			lines := strings.Split(outputStr, "\n")
+			if len(lines) > 10 {
+				log.GetLogger().Debug("ffmpeg编码器列表摘要", zap.Strings("encoders", lines[:10]))
+			}
+		}
+	}
+	
+	var cmdArgs []string
+	if useGPU {
+		// 使用GPU加速编码
+		log.GetLogger().Info("使用GPU加速视频编码")
+		cmdArgs = []string{
+			"-y", 
+			"-i", stepParam.InputVideoPath, 
+			"-vf", fmt.Sprintf("ass=%s", strings.ReplaceAll(assPath, "\\", "/")), 
+			"-c:v", "h264_nvenc",
+			"-preset", "p4",
+			"-profile:v", "high",
+			"-c:a", "aac", 
+			"-b:a", "192k",
+			filepath.Join(stepParam.TaskBasePath, fmt.Sprintf("/output/%s", outputFileName)),
+		}
+	} else {
+		// 使用CPU编码（原始方式）
+		log.GetLogger().Info("使用CPU编码视频")
+		cmdArgs = []string{
+			"-y", 
+			"-i", stepParam.InputVideoPath, 
+			"-vf", fmt.Sprintf("ass=%s", strings.ReplaceAll(assPath, "\\", "/")), 
+			"-c:a", "aac", 
+			"-b:a", "192k",
+			filepath.Join(stepParam.TaskBasePath, fmt.Sprintf("/output/%s", outputFileName)),
+		}
+	}
+	
+	cmd := exec.Command(storage.FfmpegPath, cmdArgs...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		log.GetLogger().Error("embedSubtitles embed subtitle into video ffmpeg error", zap.String("video path", stepParam.InputVideoPath), zap.String("output", string(output)), zap.Error(err))
@@ -390,7 +441,31 @@ func convertToVertical(inputVideo, outputVideo, majorTitle, minorTitle string) e
 		return err
 	}
 
-	cmdArgs := []string{
+	// 检测系统是否支持NVENC编码
+	var useGPU bool
+	
+	// 检查ffmpeg是否支持NVENC
+	nvencSupportCmd := exec.Command(storage.FfmpegPath, "-hide_banner", "-encoders")
+	ffmpegOutput, ffmpegErr := nvencSupportCmd.CombinedOutput()
+	if ffmpegErr != nil {
+		log.GetLogger().Warn("检查ffmpeg编码器列表失败", zap.Error(ffmpegErr))
+	} else {
+		outputStr := string(ffmpegOutput)
+		if strings.Contains(outputStr, "h264_nvenc") || strings.Contains(outputStr, "hevc_nvenc") {
+			log.GetLogger().Info("ffmpeg支持NVENC编码器")
+			useGPU = true
+		} else {
+			log.GetLogger().Warn("ffmpeg不支持NVENC编码器，将使用CPU编码")
+			// 输出encoder列表的一部分，用于调试
+			lines := strings.Split(outputStr, "\n")
+			if len(lines) > 10 {
+				log.GetLogger().Debug("ffmpeg编码器列表摘要", zap.Strings("encoders", lines[:10]))
+			}
+		}
+	}
+
+	var cmdArgs []string
+	baseArgs := []string{
 		"-i", inputVideo,
 		"-vf", fmt.Sprintf("scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)*2/5,drawbox=y=0:h=100:c=black@1:t=fill,drawtext=text='%s':x=(w-text_w)/2:y=210:fontsize=55:fontcolor=yellow:box=1:boxcolor=black@0.5:fontfile='%s',drawtext=text='%s':x=(w-text_w)/2:y=280:fontsize=40:fontcolor=yellow:box=1:boxcolor=black@0.5:fontfile='%s'",
 			majorTitle, fontBold, minorTitle, fontRegular),
@@ -398,16 +473,32 @@ func convertToVertical(inputVideo, outputVideo, majorTitle, minorTitle string) e
 		"-b:v", "7587k",
 		"-c:a", "aac",
 		"-b:a", "192k",
-		"-c:v", "libx264",
-		"-preset", "fast",
-		"-y",
-		outputVideo,
 	}
+
+	if useGPU {
+		// 使用GPU加速编码
+		log.GetLogger().Info("使用GPU加速转换竖屏视频")
+		cmdArgs = append(baseArgs, 
+			"-c:v", "h264_nvenc",
+			"-preset", "p4",
+			"-profile:v", "high",
+			"-y", outputVideo,
+		)
+	} else {
+		// 使用CPU编码
+		log.GetLogger().Info("使用CPU转换竖屏视频")
+		cmdArgs = append(baseArgs, 
+			"-c:v", "libx264",
+			"-preset", "fast",
+			"-y", outputVideo,
+		)
+	}
+
 	cmd := exec.Command(storage.FfmpegPath, cmdArgs...)
-	var output []byte
-	output, err = cmd.CombinedOutput()
+	var cmdOutput []byte
+	cmdOutput, err = cmd.CombinedOutput()
 	if err != nil {
-		log.GetLogger().Error("视频转竖屏失败", zap.String("output", string(output)), zap.Error(err))
+		log.GetLogger().Error("视频转竖屏失败", zap.String("output", string(cmdOutput)), zap.Error(err))
 		return err
 	}
 
